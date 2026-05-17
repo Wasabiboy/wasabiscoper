@@ -1,0 +1,23 @@
+{
+  "name": "wasabi-scope-api",
+  "version": "0.1.0",
+  "description": "Netlify Functions backend for Wasabi Scope — proxies Claude/Whisper, persists sessions to Neon Postgres",
+  "type": "module",
+  "scripts": {
+    "dev": "netlify dev",
+    "deploy": "netlify deploy --prod",
+    "migrate": "node scripts/migrate.js"
+  },
+  "dependencies": {
+    "@netlify/database": "^1.0.0",
+    "@netlify/functions": "^2.8.0",
+    "@netlify/neon": "^0.1.2",
+    "drizzle-orm": "^1.0.0-beta.22"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^1.0.0-beta.22"
+  }
+}
