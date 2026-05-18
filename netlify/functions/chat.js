@@ -138,7 +138,7 @@ export default async (req) => {
 
   try {
     const body = await readJson(req);
-    const { sessionId, userMessage, pageContext, fileContent, fileName, screenshotDataUrl } = body;
+    const { sessionId, userMessage, pageContext, fileContent, fileName, screenshotDataUrl, pageActivity } = body;
     if (!sessionId || !userMessage) {
       return jsonResponse({ error: 'sessionId and userMessage required' }, 400);
     }
@@ -197,6 +197,12 @@ export default async (req) => {
 
     // Build the LAST user message with optional inline context, file content, and image
     const lastUserBlocks = [];
+    if (pageActivity) {
+      lastUserBlocks.push({
+        type: 'text',
+        text: `[USER ACTIVITY — what happened since the last message]\n${pageActivity}`
+      });
+    }
     if (pageContext) {
       lastUserBlocks.push({
         type: 'text',
