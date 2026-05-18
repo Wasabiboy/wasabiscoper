@@ -17,15 +17,24 @@ export default async (req) => {
   const sessionId = parts[parts.length - 1] !== 'sessions' ? parts[parts.length - 1] : null;
 
   try {
-    // List
+    // List (optionally filtered by target URL origin for auto-resume)
     if (!sessionId && req.method === 'GET') {
-      const rows = await sql`
-        SELECT id, client_name, project_type, status, coverage, created_at, updated_at
-        FROM sessions
-        WHERE user_id = ${user.id}
-        ORDER BY updated_at DESC
-        LIMIT 50
-      `;
+      const targetUrl = url.searchParams.get('targetUrl');
+      const rows = targetUrl
+        ? await sql`
+            SELECT id, client_name, project_type, status, coverage, target_url, created_at, updated_at
+            FROM sessions
+            WHERE user_id = ${user.id} AND target_url = ${targetUrl} AND status = 'active'
+            ORDER BY updated_at DESC
+            LIMIT 5
+          `
+        : await sql`
+            SELECT id, client_name, project_type, status, coverage, target_url, created_at, updated_at
+            FROM sessions
+            WHERE user_id = ${user.id}
+            ORDER BY updated_at DESC
+            LIMIT 50
+          `;
       return jsonResponse({ sessions: rows });
     }
 
@@ -33,9 +42,9 @@ export default async (req) => {
     if (!sessionId && req.method === 'POST') {
       const body = await readJson(req);
       const [row] = await sql`
-        INSERT INTO sessions (user_id, client_name, project_type, metadata)
-        VALUES (${user.id}, ${body.clientName || null}, ${body.projectType || 'general'}, ${body.metadata || {}})
-        RETURNING id, client_name, project_type, status, coverage, created_at, updated_at
+        INSERT INTO sessions (user_id, client_name, project_type, metadata, target_url)
+        VALUES (${user.id}, ${body.clientName || null}, ${body.projectType || 'general'}, ${body.metadata || {}}, ${body.targetUrl || null})
+        RETURNING id, client_name, project_type, status, coverage, target_url, created_at, updated_at
       `;
       return jsonResponse({ session: row }, 201);
     }

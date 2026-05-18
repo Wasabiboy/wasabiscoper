@@ -61,10 +61,19 @@ const REQUIREMENT_CATEGORIES = {
   ]
 };
 
-function buildSystemPrompt(session) {
+function buildSystemPrompt(session, backendScan) {
   const cats = REQUIREMENT_CATEGORIES[session.project_type] || REQUIREMENT_CATEGORIES.general;
   const coverage = session.coverage || {};
   const coverageList = cats.map(c => `- ${c.label} (${c.id}): ${coverage[c.id] || 'unknown'} — ${c.desc}`).join('\n');
+
+  let backendSection = '';
+  if (backendScan?.summary?.promptText) {
+    backendSection = `
+KNACK BACKEND SCHEMA (${backendScan.app_id}):
+${backendScan.summary.promptText}
+
+Use this schema to ask precise questions — e.g. reference specific object names, field labels, and connection relationships you see above. When the client describes a workflow, map it to the actual objects and fields.`;
+  }
 
   return `You are a senior software architect from Wasabi Digital (Auckland, NZ), scoping a project for a client.
 
@@ -75,7 +84,7 @@ CLIENT: ${session.client_name || 'Unspecified'}
 
 REQUIREMENTS COVERAGE STATUS:
 ${coverageList}
-
+${backendSection}
 RULES OF ENGAGEMENT:
 1. Ask ONE focused question at a time. Never stack multiple questions.
 2. Prioritise the LEAST-covered categories. Start with data model and core workflows.
@@ -138,6 +147,10 @@ export default async (req) => {
       SELECT * FROM sessions WHERE id = ${sessionId} AND user_id = ${user.id}
     `;
     if (!session) return jsonResponse({ error: 'Session not found' }, 404);
+
+    const [backendScan] = await sql`
+      SELECT app_id, summary FROM backend_scans WHERE session_id = ${sessionId}
+    `;
 
     // Persist the user message
     await sql`INSERT INTO messages (session_id, role, content) VALUES (${sessionId}, 'user', ${userMessage})`;
@@ -220,7 +233,7 @@ export default async (req) => {
       body: JSON.stringify({
         model: MODEL,
         max_tokens: 2000,
-        system: buildSystemPrompt(session),
+        system: buildSystemPrompt(session, backendScan),
         messages
       })
     });

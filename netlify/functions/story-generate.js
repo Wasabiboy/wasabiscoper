@@ -1,7 +1,6 @@
-// /api/scope/generate
-// Streams Claude's response back as SSE so Netlify's 10s timeout can't fire mid-generation.
+// /api/story/generate
+// Streams Claude's narrative session story as SSE.
 // Events: { delta: "text" } while streaming, { done: true, version, id, url } when saved.
-// Also stores the finished markdown in a public Netlify Blob and returns its URL.
 
 import { sql, handleOptions, requireUser, readJson, jsonResponse } from './_lib.js';
 import { getStore } from '@netlify/blobs';
@@ -17,42 +16,6 @@ const STREAM_HEADERS = {
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 };
 
-const REQUIREMENT_CATEGORIES = {
-  'knack-rebuild': ['data-model','users-roles','workflows','views-pages','business-rules','integrations','data-volume','reporting','pain-points','migration'],
-  'zoho-rebuild':  ['apps-forms','workflows','users-roles','integrations','data-model','pain-points','migration'],
-  'erp-integration': ['erp-system','integration-points','workflows','users-roles','data-flows','auth-security','pain-points'],
-  'custom-saas':   ['current-saas','usage-patterns','critical-features','nice-to-have','data-export','integrations'],
-  'general':       ['goal','users','workflows','data','integrations','constraints'],
-};
-
-function buildPrompt(session, files) {
-  const cats = REQUIREMENT_CATEGORIES[session.project_type] || REQUIREMENT_CATEGORIES.general;
-  return `Based on our entire conversation, generate a complete scoping document in markdown for ${session.client_name || 'the client'} — project type: ${session.project_type}.
-
-Structure:
-# Project scoping — ${session.client_name || 'Client'}
-## Executive summary
-## Project context
-- Client: ${session.client_name || 'TBD'}
-- Project type: ${session.project_type}
-- Files reviewed: ${files.map(f => f.name).join(', ') || 'none'}
-## Requirements
-### Data model
-### Users & roles
-### Workflows
-### Integrations
-### Business rules & validations
-### Reporting needs
-### Pain points to solve
-## Proposed architecture
-## Effort estimate
-## Risks & assumptions
-## Open questions
-## Recommended next steps
-
-Be specific. Cite things the user actually said. Don't invent details.`;
-}
-
 export default async (req) => {
   if (req.method === 'OPTIONS') return handleOptions();
   if (req.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
@@ -67,11 +30,35 @@ export default async (req) => {
   const [session] = await sql`SELECT * FROM sessions WHERE id = ${sessionId} AND user_id = ${user.id}`;
   if (!session) return jsonResponse({ error: 'Session not found' }, 404);
 
-  const history = await sql`SELECT role, content FROM messages WHERE session_id = ${sessionId} ORDER BY created_at`;
-  const files   = await sql`SELECT name FROM files WHERE session_id = ${sessionId}`;
+  const history      = await sql`SELECT role, content FROM messages WHERE session_id = ${sessionId} ORDER BY created_at`;
+  const pageContexts = await sql`SELECT url, title, captured_at, screenshot_blob_key FROM page_contexts WHERE session_id = ${sessionId} ORDER BY captured_at`;
+  const files        = await sql`SELECT name FROM files WHERE session_id = ${sessionId}`;
+
+  const screenshotCount = pageContexts.filter(p => p.screenshot_blob_key).length;
+  const pagesVisited    = [...new Set(pageContexts.map(p => p.title).filter(Boolean))];
+
+  const prompt = `You are a senior consultant at Wasabi Digital. Write a narrative session story — a first-person debrief note — about the scoping session you just conducted.
+
+SESSION DETAILS:
+- Client: ${session.client_name || 'Unspecified'}
+- Project type: ${session.project_type}
+- Pages/screens observed: ${pagesVisited.slice(0, 10).join(', ') || 'none recorded'}
+- Screenshots captured: ${screenshotCount}
+- Files reviewed: ${files.map(f => f.name).join(', ') || 'none'}
+- Coverage achieved: ${JSON.stringify(session.coverage || {})}
+
+Structure:
+# Session story — ${session.client_name || 'Client'}
+## What we set out to do
+## What the client showed us
+## Key discoveries
+## What's still unclear
+## Next steps
+
+Be concrete. Reference specific things from the conversation. Don't pad.`;
 
   const messages = history.map(m => ({ role: m.role, content: m.content }));
-  messages.push({ role: 'user', content: buildPrompt(session, files) });
+  messages.push({ role: 'user', content: prompt });
 
   const enc = new TextEncoder();
   const sse = (obj) => enc.encode(`data: ${JSON.stringify(obj)}\n\n`);
@@ -82,7 +69,7 @@ export default async (req) => {
         const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-          body: JSON.stringify({ model: MODEL, max_tokens: 6000, stream: true, messages })
+          body: JSON.stringify({ model: MODEL, max_tokens: 4000, stream: true, messages })
         });
 
         if (!claudeRes.ok) {
@@ -116,10 +103,10 @@ export default async (req) => {
         }
 
         // Persist to DB
-        const [ver] = await sql`SELECT COALESCE(MAX(version),0) AS v FROM scope_documents WHERE session_id = ${sessionId}`;
+        const [ver] = await sql`SELECT COALESCE(MAX(version),0) AS v FROM session_stories WHERE session_id = ${sessionId}`;
         const version = (ver?.v || 0) + 1;
-        const [doc] = await sql`
-          INSERT INTO scope_documents (session_id, version, content_md)
+        const [story] = await sql`
+          INSERT INTO session_stories (session_id, version, content_md)
           VALUES (${sessionId}, ${version}, ${fullText})
           RETURNING id, version
         `;
@@ -128,14 +115,14 @@ export default async (req) => {
         let publicUrl = null;
         try {
           const store = getStore({ name: 'wasabi-docs', access: 'public' });
-          const key = `scope/${sessionId}/v${version}.md`;
+          const key = `story/${sessionId}/v${version}.md`;
           await store.set(key, fullText, { metadata: { contentType: 'text/markdown' } });
           publicUrl = store.getPublicUrl(key);
         } catch (e) {
           console.warn('Blob upload failed:', e.message);
         }
 
-        controller.enqueue(sse({ done: true, version: doc.version, id: doc.id, url: publicUrl }));
+        controller.enqueue(sse({ done: true, version: story.version, id: story.id, url: publicUrl }));
         controller.close();
       } catch (e) {
         controller.enqueue(sse({ error: e.message }));
@@ -147,4 +134,4 @@ export default async (req) => {
   return new Response(stream, { headers: STREAM_HEADERS });
 };
 
-export const config = { path: '/api/scope/generate' };
+export const config = { path: '/api/story/generate' };

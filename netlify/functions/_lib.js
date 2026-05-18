@@ -1,11 +1,7 @@
-// Shared helpers — uses @netlify/database for connection discovery,
-// then picks the right Postgres driver based on the connection context:
-//   - localhost / netlify dev → pg (TCP)
-//   - production Netlify Database / Neon HTTP endpoint → @neondatabase/serverless (HTTP)
-//
-// Both drivers expose .query(text, params) — we normalise around that.
+// Shared helpers — reads WASABI_DATABASE_URL (our pinned Neon DB).
+// Falls back to NETLIFY_DATABASE_URL for local `netlify dev`.
+// Avoids @netlify/database so Netlify's neon extension can't override the connection at runtime.
 
-import { getConnectionString } from '@netlify/database';
 import pg from 'pg';
 import { neon } from '@neondatabase/serverless';
 
@@ -16,7 +12,8 @@ let _querier = null; // (text: string, params: any[]) => Promise<rows[]>
 async function getQuerier() {
   if (_querier) return _querier;
 
-  const connectionString = await getConnectionString();
+  const connectionString = process.env.WASABI_DATABASE_URL || process.env.NETLIFY_DATABASE_URL;
+  if (!connectionString) throw new Error('No database connection string — set WASABI_DATABASE_URL');
   const isLocal = connectionString.includes('localhost') || connectionString.includes('127.0.0.1');
 
   if (isLocal) {
