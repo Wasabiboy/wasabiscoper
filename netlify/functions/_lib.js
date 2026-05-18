@@ -1,42 +1,56 @@
-// Shared helpers — uses @netlify/database + node-postgres (pg).
-// pg works against both local dev (raw TCP Postgres) and production Neon (also TCP),
-// unlike the HTTP-only @neondatabase/serverless driver.
+// Shared helpers — uses @netlify/database for connection discovery,
+// then picks the right Postgres driver based on the connection context:
+//   - localhost / netlify dev → pg (TCP)
+//   - production Netlify Database / Neon HTTP endpoint → @neondatabase/serverless (HTTP)
+//
+// Both drivers expose .query(text, params) — we normalise around that.
 
 import { getConnectionString } from '@netlify/database';
 import pg from 'pg';
+import { neon } from '@neondatabase/serverless';
+
 const { Pool } = pg;
 
-let _pool = null;
-async function getPool() {
-  if (!_pool) {
-    const connectionString = await getConnectionString();
-    _pool = new Pool({
-      connectionString,
-      ssl: connectionString.includes('localhost') || connectionString.includes('127.0.0.1')
-        ? false
-        : { rejectUnauthorized: false }
-    });
+let _querier = null; // (text: string, params: any[]) => Promise<rows[]>
+
+async function getQuerier() {
+  if (_querier) return _querier;
+
+  const connectionString = await getConnectionString();
+  const isLocal = connectionString.includes('localhost') || connectionString.includes('127.0.0.1');
+
+  if (isLocal) {
+    const pool = new Pool({ connectionString, ssl: false });
+    _querier = async (text, params) => {
+      const r = await pool.query(text, params);
+      return r.rows;
+    };
+  } else {
+    // @neondatabase/serverless: use .query() for parameterised calls (not the tag form)
+    const sqlClient = neon(connectionString);
+    _querier = async (text, params) => {
+      const rows = await sqlClient.query(text, params);
+      return rows;
+    };
   }
-  return _pool;
+  return _querier;
 }
 
 // Tagged template helper: sql`SELECT * FROM users WHERE id = ${id}`
-// Converts the template into a parameterized query for pg.
 export async function sql(strings, ...values) {
-  const pool = await getPool();
-  // Build $1, $2, $3 ... placeholders
+  const querier = await getQuerier();
   let text = strings[0];
   for (let i = 0; i < values.length; i++) {
     text += '$' + (i + 1) + strings[i + 1];
   }
-  const result = await pool.query(text, values);
-  return result.rows;
+  return querier(text, values);
 }
 
-// Direct query for cases where the tag form is awkward
+// Direct query form for cases where the tag form is awkward
 sql.query = async (text, params) => {
-  const pool = await getPool();
-  return pool.query(text, params);
+  const querier = await getQuerier();
+  const rows = await querier(text, params);
+  return { rows };
 };
 
 const CORS_HEADERS = {
