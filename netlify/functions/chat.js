@@ -13,26 +13,22 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-5';
 
 const REQUIREMENT_CATEGORIES = {
+  // Frontend walkthrough categories only — data model is covered by the backend scan,
+  // migration/volume are a separate conversation after the builder review.
   'knack-rebuild': [
-    { id: 'data-model', label: 'Data model & entities', desc: 'Tables, fields, relationships, key constraints' },
-    { id: 'users-roles', label: 'Users & roles', desc: 'Who logs in, what they can see/do' },
+    { id: 'views-pages', label: 'Views & pages', desc: 'Forms, tables, dashboards, menus' },
     { id: 'workflows', label: 'Core workflows', desc: 'Day-to-day tasks, sequences, approvals' },
-    { id: 'views-pages', label: 'Views & pages', desc: 'Forms, tables, dashboards, reports' },
+    { id: 'users-roles', label: 'Users & roles', desc: 'Who logs in, what they can see and do' },
     { id: 'business-rules', label: 'Business rules', desc: 'Validations, calculations, conditional logic' },
     { id: 'integrations', label: 'Integrations', desc: 'Email, Xero, Stripe, webhooks, exports' },
-    { id: 'data-volume', label: 'Data volume & growth', desc: 'Record counts, expected growth' },
-    { id: 'reporting', label: 'Reporting & analytics', desc: 'What gets measured, by whom, how often' },
-    { id: 'pain-points', label: 'Current pain points', desc: 'What breaks, slow, or missing' },
-    { id: 'migration', label: 'Migration & cutover', desc: 'Historic data, downtime tolerance' }
+    { id: 'pain-points', label: 'Pain points', desc: 'What breaks, is slow, or is missing' },
   ],
   'zoho-rebuild': [
-    { id: 'apps-forms', label: 'Apps, forms, reports', desc: 'Creator structure to be replicated' },
-    { id: 'workflows', label: 'Workflows & deluge', desc: 'Existing scripts and automations' },
+    { id: 'apps-forms', label: 'Apps & forms', desc: 'Screens, fields, layouts' },
+    { id: 'workflows', label: 'Workflows & automations', desc: 'Deluge scripts, triggers, approvals' },
     { id: 'users-roles', label: 'Users & permissions', desc: 'Role-based access' },
-    { id: 'integrations', label: 'Connected services', desc: 'Books, CRM, third-party APIs' },
-    { id: 'data-model', label: 'Data model', desc: 'Forms, fields, relationships' },
+    { id: 'integrations', label: 'Connected services', desc: 'Books, CRM, APIs' },
     { id: 'pain-points', label: 'Pain points', desc: 'Why move off Zoho?' },
-    { id: 'migration', label: 'Migration plan', desc: 'Historic data, cutover' }
   ],
   'erp-integration': [
     { id: 'erp-system', label: 'ERP details', desc: 'Vendor, version, on-prem/cloud' },
