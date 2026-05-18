@@ -1,13 +1,13 @@
 // /api/chat
-// Body: { sessionId, userMessage, pageContext?, fileContent?, fileName? }
-// - Loads full chat history from DB
-// - Builds the system prompt with current coverage state
-// - Calls Claude (Anthropic key from server env, never exposed to extension)
-// - Parses <coverage> tags from reply, updates sessions.coverage
-// - Persists user + assistant messages
-// - Returns the reply
+// Body: { sessionId, userMessage, pageContext?, fileContent?, fileName?, screenshotDataUrl? }
+// - Loads full chat history
+// - Optionally uploads screenshot to Netlify Blobs and passes to Claude vision
+// - Calls Claude with system prompt + history + vision
+// - Persists messages, parses <coverage> tags
+// - Stores screenshot key in page_contexts so the scope doc can embed them later
 
 import { sql, jsonResponse, handleOptions, requireUser, readJson } from './_lib.js';
+import { getStore } from '@netlify/blobs';
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-5';
@@ -79,21 +79,40 @@ ${coverageList}
 RULES OF ENGAGEMENT:
 1. Ask ONE focused question at a time. Never stack multiple questions.
 2. Prioritise the LEAST-covered categories. Start with data model and core workflows.
-3. When the user shares page context (URL, forms, tables), reference specific things you see — "I notice your job table has a 'Status' column with values like 'Quoted', 'Confirmed'. What triggers each transition?"
-4. Probe for edge cases, exceptions, and integrations.
-5. If the user uploads a document, refer to it explicitly.
-6. After every 3-4 exchanges, briefly summarise what you've learned about one category.
-7. To update coverage, include a JSON object on its own line in this exact format:
+3. When you receive a screenshot of the user's screen, reference specific things you see — field labels, button text, table columns, status colours. Be concrete: "I can see your job table has columns Status, Customer, and Site — what determines a job's status transitions?"
+4. When the user shares page context (URL, forms, tables), reference specific things you see.
+5. Probe for edge cases, exceptions, and integrations.
+6. If the user uploads a document, refer to it explicitly.
+7. After every 3-4 exchanges, briefly summarise what you've learned about one category.
+8. To update coverage, include a JSON object on its own line in this exact format:
    <coverage>{"category-id": "done", "another-id": "partial"}</coverage>
    The user won't see this — it's parsed out.
-8. Be conversational, direct, NZ-friendly. No corporate fluff. Treat the user as a peer.
-9. If the user seems stuck, suggest they demonstrate something on screen rather than describing it.`;
+9. Be conversational, direct, NZ-friendly. No corporate fluff. Treat the user as a peer.
+10. If the user seems stuck, suggest they demonstrate something on screen rather than describing it.`;
 }
 
 function parseCoverageUpdates(text) {
   const match = text.match(/<coverage>([\s\S]*?)<\/coverage>/);
   if (!match) return null;
   try { return JSON.parse(match[1]); } catch { return null; }
+}
+
+// Parse a data URL like "data:image/jpeg;base64,XXX" into {mediaType, base64}
+function parseDataUrl(dataUrl) {
+  const m = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (!m) return null;
+  return { mediaType: m[1], base64: m[2] };
+}
+
+async function uploadScreenshot(sessionId, dataUrl) {
+  const parsed = parseDataUrl(dataUrl);
+  if (!parsed) return null;
+
+  const store = getStore('wasabi-screenshots');
+  const key = `${sessionId}/${Date.now()}.jpg`;
+  const buf = Buffer.from(parsed.base64, 'base64');
+  await store.set(key, buf, { metadata: { mediaType: parsed.mediaType } });
+  return { key, mediaType: parsed.mediaType, base64: parsed.base64 };
 }
 
 export default async (req) => {
@@ -110,7 +129,7 @@ export default async (req) => {
 
   try {
     const body = await readJson(req);
-    const { sessionId, userMessage, pageContext, fileContent, fileName } = body;
+    const { sessionId, userMessage, pageContext, fileContent, fileName, screenshotDataUrl } = body;
     if (!sessionId || !userMessage) {
       return jsonResponse({ error: 'sessionId and userMessage required' }, 400);
     }
@@ -120,38 +139,76 @@ export default async (req) => {
     `;
     if (!session) return jsonResponse({ error: 'Session not found' }, 404);
 
-    // Persist the user message first
+    // Persist the user message
     await sql`INSERT INTO messages (session_id, role, content) VALUES (${sessionId}, 'user', ${userMessage})`;
 
-    // Save page context if attached
-    if (pageContext) {
+    // Handle screenshot — upload to blobs, save reference in page_contexts
+    let screenshotInfo = null;
+    if (screenshotDataUrl) {
+      try {
+        screenshotInfo = await uploadScreenshot(sessionId, screenshotDataUrl);
+        if (screenshotInfo) {
+          await sql`
+            INSERT INTO page_contexts (session_id, url, title, context, screenshot_blob_key)
+            VALUES (
+              ${sessionId},
+              ${pageContext?.url || null},
+              ${pageContext?.title || null},
+              ${JSON.stringify(pageContext || {})},
+              ${screenshotInfo.key}
+            )
+          `;
+        }
+      } catch (e) {
+        console.error('Screenshot upload failed:', e);
+        // Continue without screenshot rather than failing the whole turn
+      }
+    } else if (pageContext) {
+      // No screenshot but we have DOM context
       await sql`
         INSERT INTO page_contexts (session_id, url, title, context)
         VALUES (${sessionId}, ${pageContext.url || null}, ${pageContext.title || null}, ${JSON.stringify(pageContext)})
       `;
     }
 
-    // Load full history for the model
+    // Load full history
     const history = await sql`
       SELECT role, content FROM messages WHERE session_id = ${sessionId} ORDER BY created_at
     `;
 
-    // Build messages array, injecting context blocks as preceding user turns
+    // Build messages array
     const messages = [];
-    for (const msg of history) {
-      messages.push({ role: msg.role, content: msg.content });
+    for (let i = 0; i < history.length - 1; i++) {
+      messages.push({ role: history[i].role, content: history[i].content });
     }
-    // Inject inline context just before the latest user message
-    if (pageContext || fileContent) {
-      const lastUser = messages.pop();
-      if (pageContext) {
-        messages.push({ role: 'user', content: `[PAGE CONTEXT]\n${JSON.stringify(pageContext, null, 2)}` });
-      }
-      if (fileContent) {
-        messages.push({ role: 'user', content: `[DOCUMENT: ${fileName || 'attachment'}]\n${fileContent.slice(0, 8000)}` });
-      }
-      messages.push(lastUser);
+
+    // Build the LAST user message with optional inline context, file content, and image
+    const lastUserBlocks = [];
+    if (pageContext) {
+      lastUserBlocks.push({
+        type: 'text',
+        text: `[PAGE CONTEXT]\n${JSON.stringify(pageContext, null, 2)}`
+      });
     }
+    if (fileContent) {
+      lastUserBlocks.push({
+        type: 'text',
+        text: `[DOCUMENT: ${fileName || 'attachment'}]\n${fileContent.slice(0, 8000)}`
+      });
+    }
+    if (screenshotInfo) {
+      lastUserBlocks.push({
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: screenshotInfo.mediaType,
+          data: screenshotInfo.base64
+        }
+      });
+    }
+    lastUserBlocks.push({ type: 'text', text: userMessage });
+
+    messages.push({ role: 'user', content: lastUserBlocks });
 
     const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -176,7 +233,6 @@ export default async (req) => {
     const data = await claudeRes.json();
     const reply = data.content[0].text;
 
-    // Parse coverage updates and merge
     const coverageUpdate = parseCoverageUpdates(reply);
     if (coverageUpdate) {
       await sql`
@@ -186,15 +242,13 @@ export default async (req) => {
       `;
     }
 
-    // Persist assistant reply
     await sql`
       INSERT INTO messages (session_id, role, content, metadata)
-      VALUES (${sessionId}, 'assistant', ${reply}, ${JSON.stringify({ model: MODEL, usage: data.usage })})
+      VALUES (${sessionId}, 'assistant', ${reply}, ${JSON.stringify({ model: MODEL, usage: data.usage, hadScreenshot: !!screenshotInfo })})
     `;
 
-    // Return reply + updated coverage so the extension can update the UI
     const [updated] = await sql`SELECT coverage FROM sessions WHERE id = ${sessionId}`;
-    return jsonResponse({ reply, coverage: updated.coverage });
+    return jsonResponse({ reply, coverage: updated.coverage, screenshotStored: !!screenshotInfo });
   } catch (e) {
     console.error('[chat]', e);
     return jsonResponse({ error: e.message }, 500);

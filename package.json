@@ -9,6 +9,7 @@
     "migrate": "node scripts/migrate.js"
   },
   "dependencies": {
+    "@netlify/blobs": "^10.7.7",
     "@netlify/database": "^1.0.0",
     "@netlify/functions": "^2.8.0",
     "drizzle-orm": "^1.0.0-beta.22",
