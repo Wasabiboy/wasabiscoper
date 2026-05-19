@@ -152,6 +152,55 @@ async function api(path, options = {}) {
   return res.json();
 }
 
+/** Whisper via backend (OPENAI_API_KEY on Netlify). */
+async function transcribeAudioBlob(blob, filename = 'recording.webm') {
+  if (!state.sessionId) throw new Error('Start a session first.');
+  console.log('[sidepanel] Transcribing audio:', { blobType: blob.type, blobSize: blob.size, filename });
+  const form = new FormData();
+  // Ensure the blob has a usable MIME type for Whisper
+  form.append('file', blob, filename);
+  form.append('sessionId', state.sessionId);
+  const url = `${state.apiBase.replace(/\/$/, '')}/api/transcribe`;
+  console.log('[sidepanel] POST', url);
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'x-wasabi-token': state.token },
+    body: form
+  });
+  const raw = await res.text();
+  console.log('[sidepanel] Transcribe response:', res.status, raw.slice(0, 200));
+  if (!res.ok) {
+    let err = raw;
+    try {
+      const j = JSON.parse(raw);
+      err = j.error || raw;
+    } catch { /* use raw */ }
+    throw new Error(`Transcription failed (${res.status}): ${err}`);
+  }
+  const body = JSON.parse(raw);
+  const t = body.transcript?.text ?? body.transcript;
+  const text = (typeof t === 'string' ? t : '').trim();
+  console.log('[sidepanel] Transcript result:', text ? `"${text.slice(0, 80)}…"` : '(empty)');
+  return text;
+}
+
+/** Transcribe voice clip and send to the scoping agent. */
+async function submitVoiceToAgent(blob, mimeType) {
+  const ext = (mimeType || '').includes('mp4') ? 'm4a' : 'webm';
+  systemMessage('Transcribing your voice…');
+  const text = await transcribeAudioBlob(blob, `voice.${ext}`);
+  if (!text) {
+    systemMessage('No speech detected — try again, speaking clearly.');
+    return;
+  }
+  $('chat-input').value = text;
+  const preview = text.length > 140 ? text.slice(0, 140) + '…' : text;
+  systemMessage(`You said: “${preview}” — sending to agent…`);
+  // Skip full-page scroll capture on voice turns (faster; user already spoke).
+  await sendToAgent(text, { skipScreenshot: true });
+  $('chat-input').value = '';
+}
+
 function stopAudio() {
   window.speechSynthesis.cancel();
   if (currentAudio) { currentAudio.pause(); currentAudio = null; }
@@ -200,12 +249,26 @@ async function speakElevenLabs(text) {
 function speakWebSpeech(text) {
   window.speechSynthesis.cancel();
   const utter = new SpeechSynthesisUtterance(text);
-  const voices = window.speechSynthesis.getVoices();
-  utter.voice = voices.find(v => /en.NZ|en.AU/i.test(v.lang))
-    || voices.find(v => v.lang.startsWith('en'))
-    || null;
+  const pickVoice = () => {
+    const voices = window.speechSynthesis.getVoices();
+    return voices.find(v => /en.NZ|en.AU/i.test(v.lang))
+      || voices.find(v => v.lang.startsWith('en'))
+      || null;
+  };
+  utter.voice = pickVoice();
   utter.rate = 1.05;
   utter.pitch = 1.0;
+  utter.onerror = () => {
+    systemMessage('🔇 Spoken reply unavailable in this panel — read the text above, or add an ElevenLabs key in Settings.');
+  };
+  // Voices often load asynchronously on first open.
+  if (!utter.voice && window.speechSynthesis.getVoices().length === 0) {
+    window.speechSynthesis.onvoiceschanged = () => {
+      utter.voice = pickVoice();
+      window.speechSynthesis.speak(utter);
+    };
+    return;
+  }
   window.speechSynthesis.speak(utter);
 }
 
@@ -599,13 +662,16 @@ async function sendToAgent(userText, extras = {}) {
   try {
     // Capture screenshot and activity log before every turn
     const fullPageUi = $('full-page-shot');
-    const useFullPage = fullPageUi ? fullPageUi.checked : state.fullPageScreenshots;
-    const [snapResult, activityResult] = await Promise.allSettled([
-      extras.screenshotDataUrl
+    const useFullPage = !extras.skipScreenshot && (fullPageUi ? fullPageUi.checked : state.fullPageScreenshots);
+    const snapPromise = extras.skipScreenshot
+      ? Promise.resolve({ ok: false })
+      : extras.screenshotDataUrl
         ? Promise.resolve({ ok: false })
         : useFullPage
           ? chrome.runtime.sendMessage({ type: 'CAPTURE_FULL_PAGE_SCREENSHOT' })
-          : chrome.runtime.sendMessage({ type: 'CAPTURE_SCREENSHOT' }),
+          : chrome.runtime.sendMessage({ type: 'CAPTURE_SCREENSHOT' });
+    const [snapResult, activityResult] = await Promise.allSettled([
+      snapPromise,
       chrome.runtime.sendMessage({ type: 'GET_ACTIVITY' })
     ]);
     if (snapResult.status === 'fulfilled' && snapResult.value) {
@@ -643,6 +709,9 @@ async function sendToAgent(userText, extras = {}) {
     renderChecklist();
     renderBubble('assistant', data.reply);
     speakReply(data.reply);
+    if (extras.skipScreenshot && !state.voiceEnabled) {
+      systemMessage('Tip: click 🔊 to hear the agent read replies aloud.');
+    }
     if (stitchWarning) systemMessage('📸 ' + stitchWarning);
   } catch (e) {
     const sys = $('chat').querySelector('.bubble.system:last-of-type');
@@ -673,32 +742,209 @@ $('page-ctx-btn').addEventListener('click', async () => {
   }
 });
 
-let recognition = null;
-$('mic-btn').addEventListener('click', () => {
+const voiceMic = {
+  active: false,
+  starting: false,           // true while START_VOICE_INPUT is in flight
+  _stopRequested: false,     // set by finishVoiceRecording when called during startup
+  _stopping: false,          // guard against double-stop calls
+  maxTimer: null,
+  recognition: null,         // Web Speech Recognition instance
+  webSpeechFinal: '',        // accumulated final text from Web Speech
+  webSpeechSuccess: false,   // whether Web Speech produced usable text
+  resolveWebSpeech: null,    // resolve for the Web Speech completion promise
+  webSpeechPromise: Promise.resolve() // resolved when Web Speech is done (or skipped)
+};
+
+function setMicRecordingUi(on) {
+  voiceMic.active = on;
+  if (on) voiceMic._stopRequested = false;
+  $('mic-btn').style.color = on ? 'var(--accent)' : '';
+  $('mic-btn').textContent = '🎤';
+  $('mic-btn').title = on
+    ? 'Release to send your voice reply'
+    : 'Hold to speak to the agent';
+  if (!on) {
+    $('voice-preview').classList.add('hidden');
+    voiceMic._stopping = false;
+    voiceMic._stopRequested = false;
+  }
+}
+
+/** Show live transcription preview during voice recording. */
+function updateVoicePreview(text, isFinal) {
+  const preview = $('voice-preview');
+  const textEl = $('voice-preview-text');
+  if (!preview || !textEl) return;
+  preview.classList.remove('hidden');
+  textEl.textContent = text || '🎤 Listening…';
+  textEl.className = isFinal ? 'voice-preview-text final' : 'voice-preview-text';
+}
+
+/** Start Web Speech Recognition for live transcription preview. */
+function startWebSpeech() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { systemMessage('Speech recognition not available.'); return; }
-  if (recognition) { recognition.stop(); recognition = null; $('mic-btn').style.color = ''; return; }
-  recognition = new SR();
-  recognition.continuous = false;
-  recognition.interimResults = true;
-  recognition.lang = 'en-NZ';
-  let finalText = '';
-  recognition.onresult = (e) => {
-    let interim = '';
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      if (e.results[i].isFinal) finalText += e.results[i][0].transcript + ' ';
-      else interim += e.results[i][0].transcript;
+  if (!SR) {
+    console.log('[sidepanel] Web Speech API not available — falling back to Whisper only.');
+    voiceMic.webSpeechSuccess = false;
+    voiceMic.resolveWebSpeech?.();
+    return;
+  }
+
+  voiceMic.webSpeechPromise = new Promise(resolve => {
+    voiceMic.resolveWebSpeech = resolve;
+  });
+  voiceMic.webSpeechSuccess = false;
+  voiceMic.webSpeechFinal = '';
+
+  try {
+    const rec = new SR();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = 'en-US';
+
+    rec.onresult = (e) => {
+      let interim = '';
+      let final = voiceMic.webSpeechFinal;
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const result = e.results[i];
+        if (result.isFinal) {
+          final += result[0].transcript + ' ';
+        } else {
+          interim += result[0].transcript;
+        }
+      }
+      voiceMic.webSpeechFinal = final;
+      updateVoicePreview((final + interim).trim(), false);
+    };
+
+    rec.onerror = (e) => {
+      console.warn('[sidepanel] Web Speech error:', e.error, e.message);
+      // 'no-speech' and 'aborted' are common — let onend finalize
+    };
+
+    rec.onend = () => {
+      const text = voiceMic.webSpeechFinal.trim();
+      voiceMic.webSpeechSuccess = !!text;
+      if (text) {
+        updateVoicePreview(text, true);
+        // Don't populate chat input here — finishVoiceRecording handles auto-send
+      } else {
+        $('voice-preview').classList.add('hidden');
+        systemMessage('No speech detected by browser — falling back to server transcription…');
+      }
+      voiceMic.recognition = null;
+      voiceMic.resolveWebSpeech?.();
+    };
+
+    rec.start();
+    voiceMic.recognition = rec;
+    updateVoicePreview('', false);
+    console.log('[sidepanel] Web Speech recognition started.');
+  } catch (e) {
+    console.error('[sidepanel] Web Speech start failed:', e);
+    voiceMic.webSpeechSuccess = false;
+    voiceMic.recognition = null;
+    voiceMic.resolveWebSpeech?.();
+  }
+}
+
+/** Stop Web Speech Recognition and finalize transcript. */
+function stopWebSpeech() {
+  if (voiceMic.recognition) {
+    try {
+      voiceMic.recognition.stop();
+    } catch (e) {
+      console.warn('[sidepanel] Web Speech stop error:', e);
+      voiceMic.recognition = null;
+      voiceMic.webSpeechSuccess = false;
+      voiceMic.resolveWebSpeech?.();
     }
-    $('chat-input').value = (finalText + interim).trim();
-  };
-  recognition.onend = () => {
-    $('mic-btn').style.color = '';
-    recognition = null;
-    if ($('chat-input').value.trim()) $('send-btn').click();
-  };
-  recognition.onerror = (e) => systemMessage('Speech: ' + e.error);
-  recognition.start();
-  $('mic-btn').style.color = 'var(--accent)';
+  } else {
+    // No recognition instance — nothing to stop, resolve now
+    voiceMic.webSpeechSuccess = false;
+    voiceMic.resolveWebSpeech?.();
+  }
+}
+
+/** Unified stop: Web Speech + offscreen recorder + timer cleanup. */
+async function finishVoiceRecording() {
+  if (voiceMic._stopping) return;
+  voiceMic._stopping = true;
+  voiceMic._stopRequested = true;
+  if (voiceMic.maxTimer != null) {
+    clearTimeout(voiceMic.maxTimer);
+    voiceMic.maxTimer = null;
+  }
+  voiceMic.starting = false;
+  stopWebSpeech();
+  try {
+    await chrome.runtime.sendMessage({ type: 'STOP_VOICE_INPUT' });
+  } catch (e) {
+    console.warn('[sidepanel] STOP_VOICE_INPUT failed:', e);
+  }
+}
+
+// Push-to-talk: pointerdown starts recording, pointerup/pointerleave stops and sends.
+$('mic-btn').addEventListener('pointerdown', async (e) => {
+  e.preventDefault();
+  $('mic-btn').setPointerCapture(e.pointerId);
+
+  if (voiceMic.active || voiceMic.starting) return;
+
+  if (!state.sessionId) {
+    systemMessage('Click ● Start session first, then use 🎤 to speak to the agent.');
+    return;
+  }
+  if (!state.apiBase?.trim() || !state.token) {
+    systemMessage('Set API base URL and Wasabi token in Settings.');
+    $('settings-panel')?.classList.remove('hidden');
+    return;
+  }
+
+  voiceMic.starting = true;
+  try {
+    const res = await chrome.runtime.sendMessage({ type: 'START_VOICE_INPUT' });
+    if (res?.ok === false) throw new Error(res.error || 'Could not start microphone');
+    voiceMic.starting = false;
+    // Check if user already released while we were waiting for START_VOICE_INPUT
+    if (voiceMic._stopRequested) {
+      console.log('[sidepanel] Stop requested during startup — aborting.');
+      return;
+    }
+    setMicRecordingUi(true);
+    startWebSpeech();
+    systemMessage('🎤 Listening… release to send.');
+    if (voiceMic.maxTimer != null) clearTimeout(voiceMic.maxTimer);
+    voiceMic.maxTimer = setTimeout(() => {
+      if (!voiceMic.active) return;
+      systemMessage('🎤 2 min limit — finalising…');
+      finishVoiceRecording();
+    }, 120000);
+  } catch (e) {
+    voiceMic.starting = false;
+    setMicRecordingUi(false);
+    systemMessage('Mic: ' + e.message);
+  }
+});
+
+$('mic-btn').addEventListener('pointerup', (e) => {
+  e.preventDefault();
+  if (!voiceMic.active && !voiceMic.starting) return;
+  finishVoiceRecording();
+});
+
+$('mic-btn').addEventListener('pointerleave', (e) => {
+  // Only stop if actively recording (not just starting up)
+  if (!voiceMic.active) return;
+  systemMessage('🎤 Released — sending…');
+  finishVoiceRecording();
+});
+
+// Also stop if the user releases the pointer anywhere outside the button
+document.addEventListener('pointerup', (e) => {
+  if (!voiceMic.active) return;
+  if (e.target === $('mic-btn') || $('mic-btn').contains(e.target)) return;
+  finishVoiceRecording();
 });
 
 const dropzone = $('dropzone');
@@ -744,6 +990,62 @@ function renderFileList() {
 }
 
 chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === 'VOICE_RECORD_STARTED') {
+    setMicRecordingUi(true);
+  }
+  if (msg.type === 'VOICE_BLOB_READY') {
+    if (voiceMic.maxTimer != null) {
+      clearTimeout(voiceMic.maxTimer);
+      voiceMic.maxTimer = null;
+    }
+    setMicRecordingUi(false);
+    (async () => {
+      try {
+        // Wait for Web Speech to finish (it should already be done by now)
+        await voiceMic.webSpeechPromise;
+        if (voiceMic.webSpeechSuccess) {
+          // Push-to-talk: Web Speech captured text — auto-send to agent
+          const text = voiceMic.webSpeechFinal.trim();
+          console.log('[sidepanel] Skipping Whisper — Web Speech captured:', text.slice(0, 80));
+          $('voice-preview').classList.add('hidden');
+          $('chat-input').value = '';
+          if (text) {
+            systemMessage(`You said: “${text.length > 100 ? text.slice(0, 100) + '…' : text}”`);
+            await sendToAgent(text, { skipScreenshot: true });
+          }
+          return;
+        }
+        // Web Speech failed or not available — fall back to Whisper transcription
+        let dataUrl = msg.dataUrl;
+        // Fallback to session storage if direct dataUrl is missing (edge case)
+        if (!dataUrl) {
+          const stored = await chrome.storage.session.get('pendingVoiceBlob');
+          dataUrl = stored.pendingVoiceBlob?.dataUrl;
+          // Clean up after fallback read
+          try { await chrome.storage.session.remove('pendingVoiceBlob'); } catch { /* non-critical */ }
+        }
+        if (!dataUrl) throw new Error('No audio received from recorder — try again.');
+        console.log('[sidepanel] Voice blob received (Whisper fallback):', { mimeType: msg.mimeType, size: msg.size, dataUrlLen: dataUrl.length });
+        const blob = await fetch(dataUrl).then((r) => r.blob());
+        console.log('[sidepanel] Blob from dataUrl:', { type: blob.type, size: blob.size });
+        await submitVoiceToAgent(blob, msg.mimeType);
+      } catch (e) {
+        console.error('[sidepanel] Voice processing failed:', e);
+        systemMessage('Voice failed: ' + e.message);
+      }
+    })();
+  }
+  if (msg.type === 'VOICE_RECORD_ERROR') {
+    if (voiceMic.maxTimer != null) {
+      clearTimeout(voiceMic.maxTimer);
+      voiceMic.maxTimer = null;
+    }
+    stopWebSpeech();
+    voiceMic.starting = false;
+    setMicRecordingUi(false);
+    systemMessage('🎤 ' + (msg.error || 'Recording failed'));
+  }
+
   if (msg.type === 'RECORDING_READY') {
     state.recordingUrl = msg.url;
     state.recordingMimeType = msg.mimeType;
@@ -778,21 +1080,13 @@ $('transcribe-recording').addEventListener('click', async () => {
   systemMessage('Transcribing via server…');
   try {
     const blob = await fetch(state.recordingUrl).then(r => r.blob());
-    const form = new FormData();
-    form.append('file', blob, 'recording.webm');
-    form.append('sessionId', state.sessionId);
-    const res = await fetch(state.apiBase + '/api/transcribe', {
-      method: 'POST',
-      headers: { 'x-wasabi-token': state.token },
-      body: form
-    });
-    if (!res.ok) throw new Error(await res.text());
-    const { transcript } = await res.json();
-    $('transcript').textContent = transcript.text;
+    const text = await transcribeAudioBlob(blob, 'recording.webm');
+    $('transcript').textContent = text;
     $('transcript').classList.remove('hidden');
     systemMessage('Transcript stored. Feeding it to the agent.');
     await sendToAgent('Analyse the transcript of what I just demonstrated and ask follow-up questions.', {
-      fileContent: transcript.text, fileName: 'session-transcript.txt'
+      fileContent: text,
+      fileName: 'session-transcript.txt'
     });
   } catch (e) {
     systemMessage('Transcription failed: ' + e.message);

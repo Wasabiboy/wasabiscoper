@@ -102,9 +102,13 @@
   <section class="panel chat-panel">
     <div id="chat" class="chat"></div>
     <div class="composer">
-      <textarea id="chat-input" rows="2" placeholder="Answer here, or click 🎤 to speak..."></textarea>
+      <textarea id="chat-input" rows="2" placeholder="Type an answer, or hold 🎤 to speak…"></textarea>
+      <div id="voice-preview" class="voice-preview hidden">
+        <span class="voice-preview-indicator">🎤</span>
+        <span id="voice-preview-text" class="voice-preview-text">Listening…</span>
+      </div>
       <div class="composer-actions">
-        <button id="mic-btn" class="icon-btn" title="Voice answer">🎤</button>
+        <button id="mic-btn" class="icon-btn" title="Hold to speak to the agent">🎤</button>
         <button id="voice-btn" class="icon-btn" title="Toggle AI voice">🔇</button>
         <button id="page-ctx-btn" class="icon-btn" title="Send page context to AI">📄</button>
         <button id="send-btn" class="primary">Send</button>

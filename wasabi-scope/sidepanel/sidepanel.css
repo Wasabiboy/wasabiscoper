@@ -135,6 +135,43 @@ body {
   outline: none;
   padding: 4px;
 }
+
+/* Live voice transcription preview */
+.voice-preview {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  margin: 4px 0;
+  background: var(--bg-2);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  font-size: 13px;
+  min-height: 36px;
+  line-height: 1.4;
+}
+.voice-preview.hidden { display: none; }
+.voice-preview-indicator {
+  flex-shrink: 0;
+  font-size: 16px;
+  animation: pulse-mic 1s ease-in-out infinite;
+}
+@keyframes pulse-mic {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.85); }
+}
+#voice-preview-text {
+  color: var(--text-2);
+  font-style: italic;
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-word;
+}
+#voice-preview-text.final {
+  color: var(--text);
+  font-style: normal;
+}
+
 .composer-actions {
   display: flex;
   justify-content: flex-end;

@@ -97,8 +97,53 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: true });
           break;
         }
+
+        case 'START_VOICE_INPUT': {
+          await ensureOffscreenDocument();
+          chrome.runtime.sendMessage({ type: 'OFFSCREEN_VOICE_START' });
+          sendResponse({ ok: true });
+          break;
+        }
+        case 'STOP_VOICE_INPUT': {
+          await ensureOffscreenDocument();
+          chrome.runtime.sendMessage({ type: 'OFFSCREEN_VOICE_STOP' });
+          sendResponse({ ok: true });
+          break;
+        }
+
         case 'RECORDING_BLOB_READY': {
           chrome.runtime.sendMessage({ type: 'RECORDING_READY', url: msg.url, mimeType: msg.mimeType, size: msg.size });
+          sendResponse({ ok: true });
+          break;
+        }
+
+        // Offscreen → service worker only; relay to side panel (MV3 does not fan-out to all contexts).
+        // Pass dataUrl directly — session storage adds unnecessary fragility.
+        case 'VOICE_BLOB_READY': {
+          // Also store as fallback in case the sidepanel is not ready for the direct message.
+          try {
+            await chrome.storage.session.set({
+              pendingVoiceBlob: { dataUrl: msg.dataUrl, mimeType: msg.mimeType, size: msg.size }
+            });
+          } catch (e) {
+            console.warn('[service-worker] pendingVoiceBlob storage failed (non-fatal):', e);
+          }
+          chrome.runtime.sendMessage({
+            type: 'VOICE_BLOB_READY',
+            dataUrl: msg.dataUrl,
+            mimeType: msg.mimeType,
+            size: msg.size
+          }).catch(() => {});
+          sendResponse({ ok: true });
+          break;
+        }
+        case 'VOICE_RECORD_STARTED': {
+          chrome.runtime.sendMessage({ type: 'VOICE_RECORD_STARTED' }).catch(() => {});
+          sendResponse({ ok: true });
+          break;
+        }
+        case 'VOICE_RECORD_ERROR': {
+          chrome.runtime.sendMessage({ type: 'VOICE_RECORD_ERROR', error: msg.error }).catch(() => {});
           sendResponse({ ok: true });
           break;
         }

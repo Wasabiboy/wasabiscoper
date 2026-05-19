@@ -32,23 +32,29 @@ export default async (req) => {
 
     // Forward to Whisper
     const whisperForm = new FormData();
-    whisperForm.append('file', file, 'recording.webm');
+    const name = typeof file.name === 'string' && file.name ? file.name : 'recording.webm';
+    const fileType = typeof file.type === 'string' && file.type ? file.type : 'audio/webm';
+    console.log('[transcribe] Forwarding to Whisper:', { name, type: fileType, size: typeof file.size === 'number' ? file.size : 'unknown' });
+    whisperForm.append('file', file, name);
     whisperForm.append('model', 'whisper-1');
+    whisperForm.append('language', 'en');
 
     const wRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
       method: 'POST',
       headers: { Authorization: 'Bearer ' + OPENAI_API_KEY },
       body: whisperForm
     });
+    const wText = await wRes.text();
+    console.log('[transcribe] Whisper response:', wRes.status, wText.slice(0, 300));
     if (!wRes.ok) {
-      const errText = await wRes.text();
-      return jsonResponse({ error: `Whisper ${wRes.status}: ${errText}` }, 502);
+      return jsonResponse({ error: `Whisper ${wRes.status}: ${wText}` }, 502);
     }
-    const result = await wRes.json();
+    const result = JSON.parse(wText);
+    console.log('[transcribe] Whisper transcript:', result.text ? `"${result.text.slice(0, 120)}…"` : '(empty)');
 
     const [row] = await sql`
       INSERT INTO transcripts (session_id, source, text)
-      VALUES (${sessionId}, 'whisper', ${result.text})
+      VALUES (${sessionId}, 'whisper', ${result.text || ''})
       RETURNING id, text, created_at
     `;
     return jsonResponse({ transcript: row });
