@@ -57,7 +57,35 @@ const REQUIREMENT_CATEGORIES = {
   ]
 };
 
-function buildSystemPrompt(session, backendScan) {
+const SPECIALIST_ROLES = {
+  // knack-rebuild
+  'views-pages':     'UI/UX analyst mapping every screen, view, form, table, and navigation path',
+  'workflows':       'business process analyst mapping every workflow end-to-end with steps, triggers, decisions, and exceptions',
+  'users-roles':     'identity and access specialist mapping every user type, permission level, and data visibility rule',
+  'business-rules':  'business logic analyst mapping every validation, calculation, conditional display rule, and automated action',
+  'integrations':    'integration architect mapping every connected system, data flow direction, API surface, and sync timing',
+  'pain-points':     'user researcher uncovering exactly what is broken, slow, or missing — and the workarounds people use today',
+  // zoho-rebuild
+  'apps-forms':      'UI analyst mapping every Zoho Creator form, layout, and screen',
+  // erp-integration
+  'erp-system':      'ERP specialist cataloguing the existing system version, modules, and configuration',
+  'integration-points': 'integration architect mapping every ERP connection point and data contract',
+  'data-flows':      'data architect mapping every data flow, sync pattern, and ownership boundary',
+  'auth-security':   'security architect mapping authentication, authorisation, and audit requirements',
+  // custom-saas
+  'current-saas':    'SaaS migration specialist assessing the current platform and its limitations',
+  'usage-patterns':  'user researcher mapping usage behaviour, frequency, and power user workflows',
+  'critical-features': 'product analyst mapping must-have functionality that cannot be compromised',
+  'nice-to-have':    'product analyst mapping wishlist features and their business value',
+  'data-export':     'data migration specialist assessing data portability and historical data requirements',
+  // general
+  'goal':        'project strategist clarifying success criteria, scope boundaries, and definition of done',
+  'users':       'user researcher mapping all user personas, their goals, and their pain points',
+  'data':        'data architect mapping entities, relationships, volumes, and data sources',
+  'constraints': 'project manager mapping budget, timeline, technology, and compliance constraints',
+};
+
+function buildSystemPrompt(session, backendScan, focusCategory) {
   const cats = REQUIREMENT_CATEGORIES[session.project_type] || REQUIREMENT_CATEGORIES.general;
   const coverage = session.coverage || {};
   const coverageList = cats.map(c => `- ${c.label} (${c.id}): ${coverage[c.id] || 'unknown'} — ${c.desc}`).join('\n');
@@ -69,6 +97,23 @@ KNACK BACKEND SCHEMA (${backendScan.app_id}):
 ${backendScan.summary.promptText}
 
 Use this schema to ask precise questions — e.g. reference specific object names, field labels, and connection relationships you see above. When the client describes a workflow, map it to the actual objects and fields.`;
+  }
+
+  let focusSection = '';
+  if (focusCategory) {
+    const cat = cats.find(c => c.id === focusCategory);
+    if (cat) {
+      const role = SPECIALIST_ROLES[focusCategory] || 'specialist';
+      focusSection = `
+
+FOCUS MODE — ${cat.label.toUpperCase()}:
+You are now acting as a ${role}. For THIS TURN, concentrate entirely on "${cat.label}" (${cat.desc}).
+- Ask the single most targeted question that would reveal the most about this category
+- Reference specific things already known about this project where relevant
+- Probe for edge cases, exceptions, and specifics within this category only
+- Do not drift to other categories this turn
+- After your question, emit a coverage update as usual`;
+    }
   }
 
   return `You are a senior software architect from Wasabi Digital (Auckland, NZ), scoping a project for a client.
@@ -84,7 +129,7 @@ ${backendSection}
 RULES OF ENGAGEMENT:
 1. Ask ONE focused question at a time. Never stack multiple questions.
 2. Prioritise the LEAST-covered categories. Start with data model and core workflows.
-3. When you receive a screenshot or page/DOM context, give a ONE-LINE summary of what you see ("Looks like a job detail form with about 12 fields") then ask ONE targeted question about something that needs clarification — a field whose purpose is unclear, a status you haven't mapped, a relationship that isn't obvious. Do NOT read back a list of field names or enumerate everything visible.
+3. When you receive a screenshot (may be a stitched full-page composite covering several scroll positions), give a ONE-LINE summary of what you see ("Looks like a job detail form with about 12 fields") then ask ONE targeted question about something that needs clarification — a field whose purpose is unclear, a status you haven't mapped, a relationship that isn't obvious. Ignore minor strip overlap/gaps from stitching. Do NOT read back a full list of field names or enumerate everything visible.
 4. When you receive user activity events, use them silently as context. Only mention them if they reveal something worth asking about (e.g. the user submitted a form you haven't discussed yet).
 5. Probe for edge cases, exceptions, and integrations.
 6. If the user uploads a document, acknowledge it briefly and ask the one most useful question from it.
@@ -99,7 +144,9 @@ RULES OF ENGAGEMENT:
    - Mark "done" once you know: the main screens/flows, who uses it, the key rules/exceptions
    Always emit this tag, even if nothing changed (emit an empty object {} if truly no change).
 9. Be conversational, direct, NZ-friendly. No corporate fluff. Treat the user as a peer.
-10. If the user seems stuck, suggest they demonstrate something on screen rather than describing it.`;
+10. If the user seems stuck, suggest they demonstrate something on screen rather than describing it.
+11. PAGE CONTEXT JSON may include platformHints (Knack runtime, Zoho Creator signals, iframe count). Use them to ask precise, product-specific questions when present.
+12. Integrations: explicitly probe for accounting (Xero, MYOB, QuickBooks), payments (Stripe), automation (Zapier, Make), email (transactional/SMTP), webhooks, calendar sync, and exports/CSV — and map inbound vs outbound and which system owns the truth.${focusSection}`;
 }
 
 function parseCoverageUpdates(text) {
@@ -140,7 +187,7 @@ export default async (req) => {
 
   try {
     const body = await readJson(req);
-    const { sessionId, userMessage, pageContext, fileContent, fileName, screenshotDataUrl, pageActivity } = body;
+    const { sessionId, userMessage, pageContext, fileContent, fileName, screenshotDataUrl, pageActivity, focusCategory } = body;
     if (!sessionId || !userMessage) {
       return jsonResponse({ error: 'sessionId and userMessage required' }, 400);
     }
@@ -241,7 +288,7 @@ export default async (req) => {
       body: JSON.stringify({
         model: MODEL,
         max_tokens: 2000,
-        system: buildSystemPrompt(session, backendScan),
+        system: buildSystemPrompt(session, backendScan, focusCategory || null),
         messages
       })
     });

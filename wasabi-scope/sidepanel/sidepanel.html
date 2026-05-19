@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Wasabi Scope</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">W</div>
+      <div>
+        <div class="brand-name">Wasabi Scope</div>
+        <div class="brand-sub" id="session-status">Idle</div>
+      </div>
+    </div>
+    <button id="settings-btn" class="icon-btn" title="Settings">⚙</button>
+  </header>
+
+  <!-- Settings drawer -->
+  <section id="settings-panel" class="panel hidden">
+    <h3>Settings</h3>
+    <label class="field">
+      <span>API base URL</span>
+      <input type="text" id="api-base" placeholder="https://wasabiscope.netlify.app" />
+    </label>
+    <label class="field">
+      <span>Wasabi token</span>
+      <input type="password" id="wasabi-token" placeholder="wsb_..." />
+    </label>
+    <label class="field">
+      <span>Client name</span>
+      <input type="text" id="client-name" placeholder="e.g. Acme Construction" />
+    </label>
+    <label class="field">
+      <span>ElevenLabs API key</span>
+      <input type="password" id="elevenlabs-key" placeholder="sk_..." />
+    </label>
+    <label class="field">
+      <span>ElevenLabs voice ID <span class="muted">(default: Charlie — AU male)</span></span>
+      <input type="text" id="elevenlabs-voice" placeholder="IKne3meq5aSn9XLyUdCD" />
+    </label>
+    <label class="field">
+      <span>Project type</span>
+      <select id="project-type">
+        <option value="knack-rebuild">Knack app rebuild</option>
+        <option value="zoho-rebuild">Zoho Creator rebuild</option>
+        <option value="erp-integration">ERP integration / liberation</option>
+        <option value="custom-saas">Custom SaaS migration</option>
+        <option value="general">General scoping</option>
+      </select>
+    </label>
+    <div id="knack-settings" class="hidden">
+      <label class="field">
+        <span>Knack Application ID</span>
+        <input type="text" id="knack-app-id" placeholder="5f3c..." />
+      </label>
+      <label class="field">
+        <span>Knack REST API key</span>
+        <input type="password" id="knack-api-key" placeholder="Knox-..." />
+      </label>
+    </div>
+    <div class="row">
+      <button id="save-settings" class="primary">Save</button>
+      <button id="export-session" class="secondary">Export session JSON</button>
+      <button id="new-session-btn" class="secondary">New session</button>
+    </div>
+  </section>
+
+  <!-- Session controls -->
+  <section class="panel">
+    <div class="row spread">
+      <button id="start-btn" class="primary big">● Start session</button>
+      <button id="stop-btn" class="danger big hidden">■ Stop</button>
+    </div>
+    <div class="row spread small">
+      <label class="check"><input type="checkbox" id="include-mic" checked /> Mic</label>
+      <label class="check"><input type="checkbox" id="include-audio" /> Tab audio</label>
+      <label class="check"><input type="checkbox" id="auto-transcribe" checked /> Auto-transcribe</label>
+    </div>
+    <div class="row spread small muted" style="margin-top: 4px">
+      <label class="check full" title="Scrolls the demo tab top-to-bottom before each AI turn (brief flicker), then stitches JPEGs vertically. Viewport-only is faster when pages are flat.">
+        <input type="checkbox" id="full-page-shot" checked /> Full-page screenshots (scroll + stitch)
+      </label>
+    </div>
+    <div id="timer" class="timer hidden">00:00</div>
+  </section>
+
+  <!-- Knack backend scan (knack-rebuild only) -->
+  <section id="knack-panel" class="panel hidden">
+    <h3 id="knack-toggle" class="collapsible-heading">
+      Knack backend <span id="knack-arrow" class="arrow">▶</span>
+    </h3>
+    <div id="knack-body" class="hidden">
+      <div id="knack-scan-status" class="muted small">Not yet scanned</div>
+      <button id="scan-knack-btn" class="secondary full" style="margin-top:6px">Scan Knack backend</button>
+      <div id="knack-schema-tree" class="schema-tree hidden"></div>
+    </div>
+  </section>
+
+  <!-- Chat with AI agent -->
+  <section class="panel chat-panel">
+    <div id="chat" class="chat"></div>
+    <div class="composer">
+      <textarea id="chat-input" rows="2" placeholder="Answer here, or click 🎤 to speak..."></textarea>
+      <div class="composer-actions">
+        <button id="mic-btn" class="icon-btn" title="Voice answer">🎤</button>
+        <button id="voice-btn" class="icon-btn" title="Toggle AI voice">🔇</button>
+        <button id="page-ctx-btn" class="icon-btn" title="Send page context to AI">📄</button>
+        <button id="send-btn" class="primary">Send</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Documents -->
+  <section class="panel">
+    <h3>Reference documents</h3>
+    <div id="dropzone" class="dropzone">
+      Drop PDFs, screenshots, exports, schemas here<br/>
+      <span class="muted">or click to upload</span>
+      <input type="file" id="file-input" multiple hidden />
+    </div>
+    <ul id="file-list" class="file-list"></ul>
+  </section>
+
+  <!-- Scoping checklist -->
+  <section class="panel">
+    <h3 id="checklist-toggle" class="collapsible-heading">
+      Requirements coverage <span id="checklist-arrow" class="arrow">▶</span>
+    </h3>
+    <div id="checklist-body" class="hidden">
+      <ul id="checklist" class="checklist"></ul>
+      <button id="generate-scope" class="primary full">Generate scoping document</button>
+      <button id="generate-story" class="secondary full" style="margin-top:6px">Generate session story</button>
+    </div>
+  </section>
+
+  <!-- Recording output -->
+  <section id="recording-section" class="panel hidden">
+    <h3>Recording</h3>
+    <video id="recording-preview" controls></video>
+    <div class="row">
+      <button id="download-recording" class="secondary">Download .webm</button>
+      <button id="transcribe-recording" class="secondary">Transcribe</button>
+    </div>
+    <div id="transcript" class="transcript hidden"></div>
+  </section>
+
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>

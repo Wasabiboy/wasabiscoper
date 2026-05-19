@@ -1,0 +1,379 @@
+:root {
+  --bg: #0f1115;
+  --bg-2: #171a21;
+  --bg-3: #1e222b;
+  --border: #2a2f3a;
+  --text: #e6e8ec;
+  --text-2: #a0a6b3;
+  --text-3: #6b7280;
+  --accent: #4ade80;
+  --accent-2: #22c55e;
+  --danger: #ef4444;
+  --warning: #f59e0b;
+  --info: #3b82f6;
+  --user-bubble: #1e3a5f;
+  --agent-bubble: #1a2235;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  overflow-y: auto;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.brand { display: flex; align-items: center; gap: 10px; }
+.logo {
+  width: 32px; height: 32px;
+  background: linear-gradient(135deg, #4ade80, #22c55e);
+  border-radius: 8px;
+  display: grid; place-items: center;
+  font-weight: 700; color: #0f1115;
+  font-size: 16px;
+}
+.brand-name { font-weight: 600; font-size: 14px; }
+.brand-sub { color: var(--text-2); font-size: 11px; }
+
+/* All non-chat panels are fixed height (auto), only chat-panel grows */
+.panel {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.panel h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.panel.hidden, .hidden { display: none !important; }
+
+/* Chat panel has a fixed viewport-relative height so sections below it stay reachable */
+.chat-panel {
+  flex: 0 0 auto;
+  height: 45vh;
+  min-height: 240px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.chat {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding-right: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0; /* required so flex children can shrink below content */
+}
+
+.bubble {
+  padding: 8px 12px;
+  border-radius: 10px;
+  max-width: 92%;
+  word-wrap: break-word;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+.bubble.agent {
+  background: var(--agent-bubble);
+  align-self: flex-start;
+  border-bottom-left-radius: 2px;
+}
+.bubble.user {
+  background: var(--user-bubble);
+  align-self: flex-end;
+  border-bottom-right-radius: 2px;
+}
+.bubble.system {
+  background: transparent;
+  color: var(--text-3);
+  font-size: 11px;
+  font-style: italic;
+  align-self: center;
+}
+
+.composer {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-3);
+  border-radius: 8px;
+  padding: 6px;
+  flex-shrink: 0;
+}
+.composer textarea {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  resize: none;
+  outline: none;
+  padding: 4px;
+}
+.composer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+button {
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  border-radius: 6px;
+  padding: 6px 12px;
+  background: var(--bg-3);
+  color: var(--text);
+  transition: filter 0.1s;
+}
+button:hover { filter: brightness(1.15); }
+button.primary {
+  background: var(--accent-2);
+  color: #0f1115;
+  font-weight: 600;
+}
+button.danger {
+  background: var(--danger);
+  color: #fff;
+  font-weight: 600;
+}
+button.secondary {
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+}
+button.big { padding: 10px 16px; font-size: 14px; }
+button.full { width: 100%; margin-top: 8px; }
+button.icon-btn {
+  background: transparent;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  font-size: 16px;
+}
+
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.row.spread { justify-content: space-between; }
+.row.small { font-size: 11px; color: var(--text-2); margin-top: 6px; }
+
+.check { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+
+.field {
+  display: block;
+  margin-bottom: 10px;
+}
+.field span {
+  display: block;
+  font-size: 11px;
+  color: var(--text-2);
+  margin-bottom: 4px;
+}
+.field input, .field select {
+  width: 100%;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 6px;
+  font: inherit;
+  outline: none;
+}
+.field input:focus, .field select:focus {
+  border-color: var(--accent-2);
+}
+
+.timer {
+  text-align: center;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 18px;
+  color: var(--accent);
+  margin-top: 8px;
+}
+
+.dropzone {
+  border: 1.5px dashed var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  text-align: center;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.dropzone:hover, .dropzone.dragover {
+  border-color: var(--accent-2);
+  color: var(--text);
+  background: var(--bg-3);
+}
+.muted { color: var(--text-3); font-size: 11px; }
+
+.file-list, .checklist {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+.file-list li {
+  padding: 6px 8px;
+  background: var(--bg-3);
+  border-radius: 6px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.collapsible-heading {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.collapsible-heading:hover { color: var(--text); }
+.arrow {
+  font-size: 10px;
+  color: var(--text-3);
+  transition: transform 0.2s;
+}
+.arrow.open { transform: rotate(90deg); }
+
+.checklist li {
+  padding: 6px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.checklist li:last-child { border-bottom: 0; }
+.cat-info { flex: 1 1 auto; min-width: 0; }
+.focus-btn {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-3);
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.6;
+}
+.focus-btn:hover {
+  border-color: var(--accent-2);
+  color: var(--accent);
+  background: transparent;
+  filter: none;
+}
+.checklist .status {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-3);
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+}
+.checklist li.done .status {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+  color: #0f1115;
+}
+.checklist li.done .status::after { content: "✓"; }
+.checklist li.partial .status {
+  background: var(--warning);
+  border-color: var(--warning);
+  color: #0f1115;
+}
+.checklist li.partial .status::after { content: "~"; }
+
+video {
+  width: 100%;
+  border-radius: 8px;
+  background: #000;
+  max-height: 200px;
+}
+
+.transcript {
+  margin-top: 8px;
+  background: var(--bg-3);
+  padding: 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+.schema-tree {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.schema-object {
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.schema-obj-header {
+  padding: 6px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  border-bottom: 1px solid var(--border);
+}
+.schema-fields {
+  padding: 4px 8px;
+}
+.schema-field {
+  font-size: 11px;
+  color: var(--text-2);
+  padding: 2px 0;
+  border-bottom: 1px solid var(--border);
+}
+.schema-field:last-child { border-bottom: 0; }
+.schema-conn { font-weight: normal; }
+.schema-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+  padding: 2px 0 4px;
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-track { background: transparent; }

@@ -1,5 +1,10 @@
 node_modules/
 .netlify/
+.claude/
+
+# Nested legacy checkout (bundle .git, .env — not part of this repo)
+wasabi-scope-api/
+
 .env
 .env.local
 .DS_Store

@@ -60,9 +60,36 @@ What is broken, slow, or missing. Quote or paraphrase specific things the client
 ### 2.4 Custom Behaviour to Port
 Any automations, calculated fields, conditional logic, or integrations mentioned.
 
-## 3. Proposed Architecture
+## 3. Captured Requirements
 
-### 3.1 Tech Stack Decision
+Document what was learned about each coverage area. Be specific — reference actual screens, field names, workflows, and things the client said. If a category was not covered, write exactly: "Not yet scoped — needs a follow-up conversation."
+
+### 3.1 Views & Pages
+Document every screen the client demonstrated or described: page name, what it displays, what actions are available, and any navigation structure. Note which pages require login and which are public.
+
+### 3.2 Core Workflows
+Document each workflow end-to-end: who initiates it, what steps occur in sequence, what decisions or conditions branch the flow, what the end result is, and any exceptions or edge cases raised.
+
+### 3.3 Users & Roles
+Document every user type: their role name, what they can see, what they can do, and what is hidden from them. Include any login method requirements and how new users are provisioned.
+
+### 3.4 Business Rules
+Document every validation, calculation, conditional display rule, and automated action discussed. For each rule: what triggers it, what it evaluates, and what it does. Reference specific Knack field names and objects where known.
+
+### 3.5 Integrations
+For each integration discussed:
+- **System**: name and purpose
+- **Direction**: inbound / outbound / bidirectional
+- **Data exchanged**: what fields or records flow
+- **Trigger**: real-time webhook, scheduled sync, or user-initiated
+- **Source of truth**: which system owns the record
+
+### 3.6 Pain Points
+Document each pain point raised: what breaks, what is slow, what is missing, and any workarounds the team currently uses. Quote the client where possible.
+
+## 4. Proposed Architecture
+
+### 4.1 Tech Stack Decision
 | Layer | Technology | Rationale |
 |---|---|---|
 | Frontend | React 19 + TypeScript + Vite | |
@@ -78,10 +105,10 @@ Any automations, calculated fields, conditional logic, or integrations mentioned
 
 Fill in the Rationale column with 1-line justifications relevant to this client.
 
-### 3.2 System Diagram
+### 4.2 System Diagram
 Draw a simple ASCII diagram: Browser → React SPA → Fastify API → PostgreSQL + any integrations.
 
-## 4. PostgreSQL Data Model
+## 5. PostgreSQL Data Model
 
 Knack → PostgreSQL type mappings used:
 - short_text / paragraph_text → TEXT
@@ -123,7 +150,7 @@ CREATE TABLE table_name (
 
 After all tables, add a ### Relationships section summarising all FK relationships.
 
-## 5. TypeScript Domain Types
+## 6. TypeScript Domain Types
 
 For each table, produce a TypeScript interface using camelCase property names derived from Knack field labels.
 
@@ -138,39 +165,39 @@ export type CreateTableNameInput = Omit<TableName, 'id' | 'createdAt' | 'updated
 export type UpdateTableNameInput = Partial<CreateTableNameInput>;
 \`\`\`
 
-## 6. API Design
+## 7. API Design
 
-### 6.1 Endpoint Map
+### 7.1 Endpoint Map
 | Method | Path | Auth | Description |
 |---|---|---|---|
 
 Produce CRUD endpoints for each entity plus any custom action endpoints that match workflows discussed.
 
-### 6.2 Auth Middleware
+### 7.2 Auth Middleware
 Describe the JWT / session strategy and which role levels have access to which endpoints.
 
-## 7. Frontend Architecture
+## 8. Frontend Architecture
 
-### 7.1 Page & Route Map
+### 8.1 Page & Route Map
 | Route | Page Component | Description |
 |---|---|---|
 
 Derive from Knack views seen in screenshots and pages mentioned in conversation.
 
-### 7.2 Key Reusable Components
+### 8.2 Key Reusable Components
 List components needed (data tables, forms, modals, status badges etc.) with a brief description.
 
-### 7.3 Form Architecture
+### 8.3 Form Architecture
 For each major entity, describe the form fields, validation rules, and submit behaviour.
 
-## 8. Auth & Roles
+## 9. Auth & Roles
 
 | Role | Description | Permissions |
 |---|---|---|
 
 If a permission matrix is appropriate, produce one: rows = roles, columns = entities, cells = CRUD access.
 
-## 9. Business Logic & Workflows
+## 10. Business Logic & Workflows
 
 For each workflow or rule identified in the conversation:
 
@@ -179,7 +206,7 @@ For each workflow or rule identified in the conversation:
 
 Implementation options: DB constraint, API validation layer, Fastify hook, background job, cron.
 
-## 10. Integrations
+## 11. Integrations
 
 For each integration mentioned:
 - **System**: name
@@ -188,15 +215,15 @@ For each integration mentioned:
 - **Approach**: REST webhook / SDK / scheduled sync
 - **Complexity**: low / medium / high
 
-## 11. Reporting & Analytics
+## 12. Reporting & Analytics
 
 List each report or dashboard needed, data source, and suggested implementation (server-rendered table, Chart.js, Recharts, etc.).
 
-## 12. Data Migration Plan
+## 13. Data Migration Plan
 
 | Phase | Task | Notes |
 |---|---|---|
-| 1 | Create PostgreSQL schema | Run DDL from Section 4 |
+| 1 | Create PostgreSQL schema | Run DDL from Section 5 |
 | 2 | Extract from Knack | Paginated REST API, 1000 records/page, 120ms delay |
 | 3 | Transform & load | Node.js scripts per object, in dependency order |
 | 4 | Resolve FKs | Map Knack IDs → PostgreSQL integer IDs |
@@ -205,7 +232,7 @@ List each report or dashboard needed, data source, and suggested implementation 
 
 Note any objects with large record counts or complex relationships that need special handling.
 
-## 13. Effort Estimate
+## 14. Effort Estimate
 
 | Phase | Scope | Days |
 |---|---|---|
@@ -223,11 +250,11 @@ Note any objects with large record counts or complex relationships that need spe
 
 Include a confidence note (e.g. "±30% — dependent on open questions below").
 
-## 14. Risks & Assumptions
+## 15. Risks & Assumptions
 
 Bullet list. Distinguish between risks (things that could blow out scope) and assumptions (things we're taking as true).
 
-## 15. Open Questions
+## 16. Open Questions
 
 Numbered list of things still to confirm before build begins.
 
